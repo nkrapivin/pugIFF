@@ -27,4 +27,4 @@ function pugIFF_genEnum() {
 	trace("chunk enum gen ok!");
 }
 
-pugIFF_genEnum();
+//pugIFF_genEnum();
