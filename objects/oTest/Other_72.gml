@@ -10,7 +10,10 @@ if (async_load[? "id"] == op) {
 			var _after = get_timer();
 			var _diff = _after - _before;
 			trace("look mom I parsed the file in ", _diff, "microsecs, are you proud of me? I miss you. :(");
-			trace("what:\n", json_stringify(_pugIFFStruct));
+			
+			var _pugIFFStructS = json_stringify(_pugIFFStruct);
+			trace("what:\n", _pugIFFStructS);
+			dump(_pugIFFStructS);
 			
 			// feel free to place a breakpoint here:
 			buffer_delete(IFF);

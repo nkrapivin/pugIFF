@@ -37,8 +37,8 @@ function pIFF_getIFFPath() {
 }
 
 function pIFF_readString(_b) {
-	var _old = buffer_tell(_b);
 	var _addr = buffer_read(_b, buffer_u32);
+	var _old = buffer_tell(_b);
 	buffer_seek(_b, buffer_seek_start, _addr);
 	var _result = buffer_read(_b, buffer_string);
 	buffer_seek(_b, buffer_seek_start, _addr - 4);
@@ -81,7 +81,36 @@ function pIFF_dummyHandler(_b, _size, _id) {
 	return _result;
 }
 
+function pIFF_listHandler(_b, _size, _id, _handler, _skip) {
+	// generic GameMaker List chunk
+	/*  u32 count
+	 *  repeat (count)
+	 *      u32 pointer to item
+	 *  u8 4byte aligned padding
+	 */
+	var _start = buffer_tell(_b);
+	var _len = buffer_read(_b, buffer_u32);
+	var _items = array_create(_len);
+	for (var _i = 0; _i < _len; _i++) {
+		var _itemaddr = buffer_read(_b, buffer_u32);
+		var _itemold = buffer_tell(_b);
+		
+		buffer_seek(_b, buffer_seek_start, _itemaddr);
+		_items[_i] = _handler(_b, _size, _id, true);
+		buffer_seek(_b, buffer_seek_start, _itemold);
+	}
+	
+	if (_skip) {
+		// skip the remaining data which are the objects themselves
+		var _rem = buffer_tell(_b) - _start;
+		buffer_seek(_b, buffer_seek_relative, _size - _rem);
+	}
+	
+	return _items;
+}
+
 function pIFF_readItemTPAG(_b, _size, _id) {
+	var _address = buffer_tell(_b);
 	var _sourceX = buffer_read(_b, buffer_u16);
 	var _sourceY = buffer_read(_b, buffer_u16);
 	var _sourceW = buffer_read(_b, buffer_u16);
@@ -95,6 +124,7 @@ function pIFF_readItemTPAG(_b, _size, _id) {
 	var _textureId = buffer_read(_b, buffer_u16);
 	
 	return {
+		address: _address,
 		sourceX: _sourceX,
 		sourceY: _sourceY,
 		sourceW: _sourceW,
@@ -109,34 +139,111 @@ function pIFF_readItemTPAG(_b, _size, _id) {
 	};
 }
 
+function pIFF_readItemFontGlyphKerning(_b, _size, _id) {
+	var _kerningCount = buffer_read(_b, buffer_u16);
+	var _kerningPairs = array_create(_kerningCount);
+	for (var _i = 0; _i < _kerningCount; _i++) {
+		var _address = buffer_tell(_b);
+		var _kOther = buffer_read(_b, buffer_s16);
+		var _kAmount = buffer_read(_b, buffer_s16);
+		_kerningPairs[_i] = {
+			address: _address,
+			kOther: _kOther,
+			kAmount: _kAmount
+		};
+	}
+	
+	return _kerningPairs;
+}
+
+function pIFF_readItemFONTGlyph(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _character = buffer_read(_b, buffer_u16);
+	var _sourceX = buffer_read(_b, buffer_u16);
+	var _sourceY = buffer_read(_b, buffer_u16);
+	var _sourceWidth = buffer_read(_b, buffer_u16);
+	var _sourceHeight = buffer_read(_b, buffer_u16);
+	var _shift = buffer_read(_b, buffer_s16);
+	var _offset = buffer_read(_b, buffer_s16);
+	var _kerningPairs = pIFF_readItemFontGlyphKerning(_b, _size, _id);
+	
+	return {
+		address: _address,
+		character: _character,
+		sourceX: _sourceX,
+		sourceY: _sourceY,
+		sourceWidth: _sourceWidth,
+		sourceHeight: _sourceHeight,
+		shift: _shift,
+		offset: _offset,
+		kerningPairs: _kerningPairs
+	};
+}
+
+function pIFF_readItemFONT(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _name = pIFF_readString(_b);
+	var _faceName = pIFF_readString(_b);
+	
+	// IN PRE-GMS2.3 THE FONT SIZE WAS A POSITIVE INTEGER
+	// IN GMS2.3 IT'S A NEGATIVE FLOAT (0f - actualSize)
+	// WHY? NO IDEA
+	// WHAT? NO IDEA
+	// WHAT'S THE REASON? NO IDEA
+	// PUG? YES!
+	//var _fontSize = buffer_read(_b, buffer_s32);
+	var _fontSize = -(buffer_read(_b, buffer_f32));
+	
+	// int32 0==false, 1==true bruh.
+	var _bold = bool(buffer_read(_b, buffer_s32));
+	var _italic = bool(buffer_read(_b, buffer_s32));
+	
+	// 16+8+8=sizeof(int) >:(
+	var _rangeStart = buffer_read(_b, buffer_s16);
+	var _charset = buffer_read(_b, buffer_u8); // remnant from GM5-8.1
+	var _antialiasing = buffer_read(_b, buffer_u8); // 0,1,2,3
+	
+	var _rangeEnd = buffer_read(_b, buffer_s32);
+	var _tpagAddress = buffer_read(_b, buffer_u32); // this is the ADDRESS, not an INDEX.
+	var _scaleX = buffer_read(_b, buffer_f32);
+	var _scaleY = buffer_read(_b, buffer_f32);
+	
+	// BYTECODE >= 17 ONLY!!!!!!!!!
+	var _ascenderOffset = buffer_read(_b, buffer_s32);
+	
+	// weird I know
+	var _glyphs = pIFF_listHandler(_b, _size, _id, pIFF_readItemFONTGlyph, false);
+	
+	return {
+		address: _address,
+		name: _name,
+		faceName: _faceName,
+		fontSize: _fontSize,
+		bold: _bold,
+		italic: _italic,
+		rangeStart: _rangeStart,
+		charset: _charset,
+		antialiasing: _antialiasing,
+		rangeEnd: _rangeEnd,
+		tpagAddress: _tpagAddress,
+		scaleX: _scaleX,
+		scaleY: _scaleY,
+		asecnderOffset: _ascenderOffset,
+		glyphs: _glyphs
+	};
+}
+
 function pIFF_TPAGHandler(_b, _size, _id) {
 	trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id };
-	
-	// generic GameMaker List chunk
-	/*  u32 count
-	 *  repeat (count)
-	 *      u32 pointer to item
-	 *  u8 4byte aligned padding
-	 */
-	var _len = buffer_read(_b, buffer_u32);
-	var _items = array_create(_len);
-	for (var _i = 0; _i < _len; _i++) {
-		var _itemaddr = buffer_read(_b, buffer_u32);
-		var _itemold = buffer_tell(_b);
-		
-		buffer_seek(_b, buffer_seek_start, _itemaddr);
-		_items[_i] = pIFF_readItemTPAG(_b, _size, _id);
-		buffer_seek(_b, buffer_seek_start, _itemold);
-	}
-	
-	// skip the remaining data which are the objects themselves
-	var _rem = buffer_tell(_b) - _start;
-	buffer_seek(_b, buffer_seek_relative, _size - _rem);
-	
-	_result.items = _items;
-	
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTPAG, true) };
+	return _result;
+}
+
+function pIFF_FONTHandler(_b, _size, _id) {
+	trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemFONT, true) };
 	return _result;
 }
 
@@ -204,6 +311,11 @@ function pIFF_parse(_b) {
 				// I am too lazy, Juju told me he only needs tpage entries, you do the rest of the work.
 				// Keep in mind that chunks change formats between GM versions sometimes, so you gotta parse GEN8 first.
 				_result[$ pIFF_idToString(_hdr)] = pIFF_dummyHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.FONT: {
+				_result.FONT = pIFF_FONTHandler(_b, _size, _hdr);
 				break;
 			}
 			

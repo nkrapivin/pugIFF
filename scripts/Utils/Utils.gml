@@ -9,3 +9,10 @@ function trace() {
 	show_debug_message(_out);
 	return _out;
 }
+
+function dump(_string) {
+	var _b = buffer_create(string_byte_length(_string), buffer_fixed, 1);
+	buffer_write(_b, buffer_text, _string);
+	buffer_save(_b, "dump.txt");
+	buffer_delete(_b);
+}
