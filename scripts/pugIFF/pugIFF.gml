@@ -21,6 +21,7 @@ function pIFF_getIFFPrefix() {
 		case os_psvita:
 		case os_switch:
 		case os_linux:
+        case os_macosx:
 			return "game";
 		default:
 			return "data";
