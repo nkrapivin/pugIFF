@@ -1,4 +1,5 @@
 
+// Feel free to replace all functions here with your own.
 
 
 function trace() {

@@ -1,5 +1,6 @@
 
-
+// replace this with your trace function.
+#macro pIFF_trace trace
 
 function pIFF_getIFFSuffix() {
 	switch (os_type) {
@@ -21,7 +22,7 @@ function pIFF_getIFFPrefix() {
 		case os_psvita:
 		case os_switch:
 		case os_linux:
-        case os_macosx:
+		case os_macosx:
 			return "game";
 		default:
 			return "data";
@@ -32,21 +33,21 @@ function pIFF_getIFFPath() {
 	var _p1 = parameter_string(1);
 	var _p2 = parameter_string(2);
     
-    //Basic "are we running from IDE" check
+	//Basic "are we running from IDE" check
 	if (string_count(game_project_name + pIFF_getIFFSuffix(), _p2) > 0) {
 		return _p2;	
 	}
     
-    //Sometimes game_project_name will replace hyphens with underscores when running under VM
-    //Let's try to find out if that's happened
-    //This trick only works on Windows I think...?
+	//Sometimes game_project_name will replace hyphens with underscores when running under VM
+	//Let's try to find out if that's happened
+	//This trick only works on Windows I think...?
 	if ((_p1 == "-game") && (os_type == os_windows)) {
-        var _found_project_name = string_delete(_p2, 1, 3);
-        _found_project_name = string_copy(_found_project_name, 1, string_length(game_project_name));
+		var _found_project_name = string_delete(_p2, 1, 3);
+		_found_project_name = string_copy(_found_project_name, 1, string_length(game_project_name));
         
-        if (string_count(_found_project_name + pIFF_getIFFSuffix(), _p2) > 0) {
-		    return _p2;
-        }
+		if (string_count(_found_project_name + pIFF_getIFFSuffix(), _p2) > 0) {
+			return _p2;
+		}
 	}
 	
 	return pIFF_getIFFPrefix() + pIFF_getIFFSuffix();
@@ -55,39 +56,31 @@ function pIFF_getIFFPath() {
 function pIFF_readString(_b) {
 	var _addr = buffer_read(_b, buffer_u32);
 	var _old = buffer_tell(_b);
-	buffer_seek(_b, buffer_seek_start, _addr);
-	var _result = buffer_read(_b, buffer_string);
+	
 	buffer_seek(_b, buffer_seek_start, _addr - 4);
 	var _len = buffer_read(_b, buffer_u32);
+	var _result = buffer_read(_b, buffer_string);
+	
 	if (string_length(_result) != _len) {
-		trace("Warning: misaligned/malformed string at address", ptr(_addr));	
+		pIFF_trace("Warning: misaligned/malformed string at address", ptr(_addr));	
 	}
+	
 	buffer_seek(_b, buffer_seek_start, _old);
 	
 	return _result;
 }
 
-global.pugIFF_temp_buffer = buffer_create(5, buffer_fixed, 1);
-
-function pIFF_align(_b, _align, _padding) {
-	while ((buffer_tell(_b) % _align) != _padding) {
-		var _p = buffer_read(_b, buffer_u8);
-		if (_p != _padding) {
-			var _addr = string(ptr(buffer_tell(_b)));
-			throw "Encountered invalid padding at address 0x" + _addr;
-		}
-	}
-}
-
 function pIFF_idToString(_id) {
-	var _buf = global.pugIFF_temp_buffer;
-	buffer_poke(_buf, 0, buffer_u32, _id);
-	var _name = buffer_peek(_buf, 0, buffer_string);
+	var _c1 = chr(_id & 0xFF);
+	var _c2 = chr((_id >> 8) & 0xFF);
+	var _c3 = chr((_id >> 16) & 0xFF);
+	var _c4 = chr((_id >> 24) & 0xFF);
+	var _name = _c1 + _c2 + _c3 + _c4;
 	return _name;
 }
 
 function pIFF_dummyHandler(_b, _size, _id) {
-	trace("Parsing chunk", pIFF_idToString(_id));
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id };
 	
@@ -249,17 +242,34 @@ function pIFF_readItemFONT(_b, _size, _id) {
 	};
 }
 
+function pIFF_readItemAGRP(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _name = pIFF_readString(_b);
+	
+	return {
+		address: _address,
+		name: _name
+	};
+}
+
 function pIFF_TPAGHandler(_b, _size, _id) {
-	trace("Parsing chunk", pIFF_idToString(_id));
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTPAG, true) };
 	return _result;
 }
 
 function pIFF_FONTHandler(_b, _size, _id) {
-	trace("Parsing chunk", pIFF_idToString(_id));
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemFONT, true) };
+	return _result;
+}
+
+function pIFF_AGRPHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemAGRP, true) };
 	return _result;
 }
 
@@ -312,10 +322,10 @@ function pIFF_parse(_b) {
 	}
 	
 	var _FORMlen = buffer_read(_b, buffer_u32); // length of the remaining chunks, or filesize-8, I don't care.
-	trace("FORM chunk detected, it's size=", _FORMlen);
+	pIFF_trace("FORM chunk detected, it's size=", _FORMlen);
 	
 	if (_FORMlen != (buffer_get_size(_b) - 8)) {
-		trace("Invalid FORM length, do you have extra data after the end of the file?!");	
+		pIFF_trace("Invalid FORM length, do you have extra data after the end of the file?!");	
 	}
 	
 	_FORMlen += 8; // I trust FORM's length more, yknow?
@@ -337,6 +347,11 @@ function pIFF_parse(_b) {
 			
 			case PIFF_HEADER.TPAG: {
 				_result.TPAG = pIFF_TPAGHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.AGRP: {
+				_result.AGRP = pIFF_AGRPHandler(_b, _size, _hdr);
 				break;
 			}
 		}
