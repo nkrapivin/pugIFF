@@ -79,6 +79,17 @@ function pIFF_idToString(_id) {
 	return _name;
 }
 
+function pIFF_align(_b, _alignment, _pad) {
+	var _a = _alignment - 1;
+	var _p = is_undefined(_pad) ? 0 : _pad;
+	while ((buffer_tell(_b) & _a) != 0) {
+		if (buffer_read(_b, buffer_u8) != _p) {
+			var _addr = string(ptr(buffer_tell(_b)));
+			throw ("Caught invalid padding at address 0x" + _addr);
+		}
+	}
+}
+
 function pIFF_dummyHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
@@ -130,7 +141,7 @@ function pIFF_readItemTPAG(_b, _size, _id) {
 	var _targetH = buffer_read(_b, buffer_u16);
 	var _boundingW = buffer_read(_b, buffer_u16);
 	var _boundingH = buffer_read(_b, buffer_u16);
-	var _textureId = buffer_read(_b, buffer_u16);
+	var _textureId = ptr(buffer_read(_b, buffer_u16)); // *_get_texture return a pointer, so here we kinda match the things.
 	
 	return {
 		address: _address,
@@ -252,6 +263,204 @@ function pIFF_readItemAGRP(_b, _size, _id) {
 	};
 }
 
+function pIFF_readItemSPRTNormal(_b, _size, _id, _w, _h) {
+	// TPAG entries list
+	var _count = buffer_read(_b, buffer_u32);
+	var _tpageAddresses = array_create(_count);
+	for (var _i = 0; _i < _count; _i++) {
+		_tpageAddresses[_i] = buffer_read(_b, buffer_u32);	
+	}
+	
+	// masks list
+	var __maskDataLength = (_w + 7) / 8 * _h;
+	var _maskcount = buffer_read(_b, buffer_u32); // can be 1, or equal to the amount of frames.
+	var _masks = array_create(_maskcount);
+	for (var _i = 0; _i < _maskcount; _i++) {
+		_masks[_i] = {
+			address: buffer_tell(_b),
+			length: __maskDataLength
+		};
+		
+		// I don't want to actually read the mask into the memory.
+		buffer_seek(_b, buffer_seek_relative, __maskDataLength);
+	}
+	
+	return [ _tpageAddresses, _masks ];
+}
+
+function pIFF_readItemSPRTSpineEntry(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _width = buffer_read(_b, buffer_s32);
+	var _height = buffer_read(_b, buffer_s32);
+	var _pngLength = buffer_read(_b, buffer_u32);
+	var _pngAddress = buffer_tell(_b);
+	
+	// again, don't wanna read the whole PNG into memory.
+	buffer_seek(_b, buffer_seek_relative, _pngLength);
+	
+	return {
+		address: _address,
+		width: _width,
+		height: _height,
+		png: {
+			address: _pngAddress,
+			length: _pngLength
+		}
+	};
+}
+
+function pIFF_readItemSPRTSpine(_b, _size, _id) {
+	pIFF_align(_b, 4, 0);
+	
+	var _address = buffer_tell(_b);
+	var _version = buffer_read(_b, buffer_s32);
+	if (_version != 2) {
+		throw "pugIFF only supports Spine sprites version 2, sorry!";	
+	}
+	
+	var __jsonLen = buffer_read(_b, buffer_s32);
+	var __atlasLen = buffer_read(_b, buffer_s32);
+	var __texturesCount = buffer_read(_b, buffer_s32);
+	
+	// don't want to read the huge JSON/atlas files into memory
+	// and why would you want to do it anyway?
+	var _jsonAddr = buffer_tell(_b);
+	buffer_seek(_b, buffer_seek_relative, __jsonLen);
+	var _atlasAddr = buffer_tell(_b);
+	buffer_seek(_b, buffer_seek_relative, __atlasLen);
+	
+	var _textures = array_create(__texturesCount);
+	for (var _i = 0; _i < __texturesCount; _i++) {
+		_textures[_i] = pIFF_readItemSPRTSpineEntry(_b, _size, _id);
+	}
+	
+	return {
+		address: _address,
+		version: _version,
+		json: {
+			address: _jsonAddr,
+			length: __jsonLen
+		},
+		atlas: {
+			address: _atlasAddr,
+			length: __atlasLen
+		},
+		textures: _textures
+	};
+}
+
+enum PIFF_SPECIAL_SPRITE_TYPE {
+	BITMAP = 0, // basically a duplicate of the GM:S 1.4 data
+	SWF = 1, // not supported
+	SPINE = 2 // not tested
+};
+
+function pIFF_readItemSPRT(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _name = pIFF_readString(_b);
+	var _width = buffer_read(_b, buffer_s32);
+	var _height = buffer_read(_b, buffer_s32);
+	var _marginLeft = buffer_read(_b, buffer_s32);
+	var _marginRight = buffer_read(_b, buffer_s32);
+	var _marginBottom = buffer_read(_b, buffer_s32);
+	var _marginTop = buffer_read(_b, buffer_s32);
+	var _transparent = bool(buffer_read(_b, buffer_s32));
+	var _smooth = bool(buffer_read(_b, buffer_s32));
+	var _preload = bool(buffer_read(_b, buffer_s32));
+	var _bboxMode = buffer_read(_b, buffer_s32);
+	var _colMaskType = buffer_read(_b, buffer_s32);
+	var _originX = buffer_read(_b, buffer_s32);
+	var _originY = buffer_read(_b, buffer_s32);
+	
+	// do not advance the offset here, just peek.
+	var __isSpecialSprite = buffer_peek(_b, buffer_tell(_b), buffer_s32);
+	var _isSpecialSprite = bool(__isSpecialSprite == -1);
+	
+	var _tpageAddresses = undefined;
+	var _masks = undefined;
+	
+	var _specialVersion = 0;
+	var _specialType = -1;
+	var _playbackSpeed = 0.0;
+	var _playbackType = -1;
+	var _spineData = undefined;
+	var _swfData = undefined;
+	var _sequenceAddress = undefined;
+	var _nineSliceAddress = undefined;
+	
+	if (_isSpecialSprite) {
+		// actually read the -1
+		buffer_read(_b, buffer_s32);
+		
+		// uh oh, plz somebody hold my hand I'm scared.
+		_specialVersion = buffer_read(_b, buffer_s32);
+		_specialType = buffer_read(_b, buffer_s32);
+		
+		// technically we should only read this if on GMS2, but this library is GMS2.3+ so I don't care.
+		_playbackSpeed = buffer_read(_b, buffer_f32);
+		_playbackType = buffer_read(_b, buffer_s32);
+		if (_specialVersion >= 2) { // GMS 2.3+
+			// read sequence data:
+			_sequenceAddress = buffer_read(_b, buffer_u32);
+			if (_specialVersion >= 3) { // GMS 2.3.2+
+				// read 9slice data:
+				_nineSliceAddress = buffer_read(_b, buffer_u32);
+			}
+		}
+		
+		switch (_specialType) {
+			case PIFF_SPECIAL_SPRITE_TYPE.BITMAP: {
+				var __arr = pIFF_readItemSPRTNormal(_b, _size, _id, _width, _height);
+				_tpageAddresses = __arr[0];
+				_masks = __arr[1];
+				break;	
+			}
+			
+			case PIFF_SPECIAL_SPRITE_TYPE.SWF: {
+				throw ("SWF sprites are not supported by pugIFF, they are very hard to deserialize. Sorry. name=" + _name);
+				//_swfData = whatever;
+				break;
+			}
+			
+			case PIFF_SPECIAL_SPRITE_TYPE.SPINE: {
+				_spineData = pIFF_readItemSPRTSpine(_b, _size, _id);
+				break;
+			}
+		}
+	}
+	else {
+		var __arr = pIFF_readItemSPRTNormal(_b, _size, _id, _width, _height);
+		_tpageAddresses = __arr[0];
+		_masks = __arr[1];
+	}
+	
+	return {
+		address: _address,
+		name: _name,
+		width: _width,
+		height: _height,
+		marginLeft: _marginLeft,
+		marginRight: _marginRight,
+		marginBottom: _marginBottom,
+		marginTop: _marginTop,
+		transparent: _transparent,
+		smooth: _smooth,
+		preload: _preload,
+		bboxMode: _bboxMode,
+		colMaskType: _colMaskType,
+		originX: _originX,
+		originY: _originY,
+		isSpecialSprite: _isSpecialSprite,
+		tpageAddresses: _tpageAddresses,
+		masks: _masks,
+		specialVersion: _specialVersion,
+		spineData: _spineData,
+		swfData: _swfData,
+		sequenceAddress: _sequenceAddress,
+		nineSliceAddress: _nineSliceAddress
+	};
+}
+
 function pIFF_TPAGHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
@@ -270,6 +479,13 @@ function pIFF_AGRPHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemAGRP, true) };
+	return _result;
+}
+
+function pIFF_SPRTHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemSPRT, true) };
 	return _result;
 }
 
@@ -353,6 +569,10 @@ function pIFF_parse(_b) {
 			case PIFF_HEADER.AGRP: {
 				_result.AGRP = pIFF_AGRPHandler(_b, _size, _hdr);
 				break;
+			}
+			
+			case PIFF_HEADER.SPRT: {
+				_result.SPRT = pIFF_SPRTHandler(_b, _size, _hdr);	
 			}
 		}
 	}
