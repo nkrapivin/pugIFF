@@ -2,57 +2,6 @@
 // replace this with your trace function.
 #macro pIFF_trace trace
 
-function pIFF_getIFFSuffix() {
-	switch (os_type) {
-		case os_android:
-			return ".droid";
-		case os_macosx:
-		case os_ios:
-			return ".ios";
-		case os_linux:
-			return ".unx";
-		default:
-			return ".win";
-	}
-}
-
-function pIFF_getIFFPrefix() {
-	switch (os_type) {
-		case os_ps4:
-		case os_psvita:
-		case os_switch:
-		case os_linux:
-		case os_macosx:
-			return "game";
-		default:
-			return "data";
-	}
-}
-
-function pIFF_getIFFPath() {
-	var _p1 = parameter_string(1);
-	var _p2 = parameter_string(2);
-    
-	//Basic "are we running from IDE" check
-	if (string_count(game_project_name + pIFF_getIFFSuffix(), _p2) > 0) {
-		return _p2;	
-	}
-    
-	//Sometimes game_project_name will replace hyphens with underscores when running under VM
-	//Let's try to find out if that's happened
-	//This trick only works on Windows I think...?
-	if ((_p1 == "-game") && (os_type == os_windows)) {
-		var _found_project_name = string_delete(_p2, 1, 3);
-		_found_project_name = string_copy(_found_project_name, 1, string_length(game_project_name));
-        
-		if (string_count(_found_project_name + pIFF_getIFFSuffix(), _p2) > 0) {
-			return _p2;
-		}
-	}
-	
-	return pIFF_getIFFPrefix() + pIFF_getIFFSuffix();
-}
-
 function pIFF_readString(_b) {
 	var _addr = buffer_read(_b, buffer_u32);
 	var _old = buffer_tell(_b);
@@ -205,14 +154,21 @@ function pIFF_readItemFONT(_b, _size, _id) {
 	var _name = pIFF_readString(_b);
 	var _faceName = pIFF_readString(_b);
 	
-	// IN PRE-GMS2.3 THE FONT SIZE WAS A POSITIVE INTEGER
-	// IN GMS2.3 IT'S A NEGATIVE FLOAT (0f - actualSize)
-	// WHY? NO IDEA
-	// WHAT? NO IDEA
-	// WHAT'S THE REASON? NO IDEA
-	// PUG? YES!
-	//var _fontSize = buffer_read(_b, buffer_s32);
-	var _fontSize = -(buffer_read(_b, buffer_f32));
+	// a little more hybrid
+	var __fontSize = buffer_peek(_b, buffer_tell(_b), buffer_s32);
+	var _fontSize = -1;
+	
+	// absurd! the size must be a float then.
+	if (__fontSize < 0 || __fontSize > 1000) {
+		pIFF_trace("Detected 2.3.1+ new font size");
+		_fontSize = -(buffer_read(_b, buffer_f32));
+	}
+	else {
+		// seems fine?
+		_fontSize = __fontSize;
+		// actually advance the offset
+		buffer_read(_b, buffer_s32);
+	}
 	
 	// int32 0==false, 1==true bruh.
 	var _bold = bool(buffer_read(_b, buffer_s32));
@@ -417,7 +373,7 @@ function pIFF_readItemSPRT(_b, _size, _id) {
 			}
 			
 			case PIFF_SPECIAL_SPRITE_TYPE.SWF: {
-				throw ("SWF sprites are not supported by pugIFF, they are very hard to deserialize. Sorry. name=" + _name);
+				pIFF_trace("SWF sprite detected name=", _name, "they are not supported by pugIFF yet.");
 				//_swfData = whatever;
 				break;
 			}
