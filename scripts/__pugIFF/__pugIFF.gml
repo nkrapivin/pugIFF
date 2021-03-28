@@ -55,7 +55,7 @@ function pIFF_listHandler(_b, _size, _id, _handler, _skip) {
 	/*  u32 count
 	 *  repeat (count)
 	 *      u32 pointer to item
-	 *  u8 4byte aligned padding
+	 *  objects...
 	 */
 	var _start = buffer_tell(_b);
 	var _len = buffer_read(_b, buffer_u32);
@@ -155,11 +155,12 @@ function pIFF_readItemFONT(_b, _size, _id) {
 	var _faceName = pIFF_readString(_b);
 	
 	// a little more hybrid
-	var __fontSize = buffer_peek(_b, buffer_tell(_b), buffer_s32);
+	var __fontSize = buffer_peek(_b, buffer_tell(_b), buffer_u32);
+	var __filter = (1 << 31);
 	var _fontSize = -1;
 	
-	// absurd! the size must be a float then.
-	if (__fontSize < 0 || __fontSize > 1000) {
+	// since the float is always negated, the 31th bit will always be set.
+	if ((__fontSize & __filter) != 0) {
 		pIFF_trace("Detected 2.3.1+ new font size");
 		_fontSize = -(buffer_read(_b, buffer_f32));
 	}
