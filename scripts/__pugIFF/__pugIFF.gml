@@ -50,7 +50,7 @@ function pIFF_dummyHandler(_b, _size, _id) {
 	return _result;
 }
 
-function pIFF_listHandler(_b, _size, _id, _handler, _skip) {
+function pIFF_listHandler(_b, _size, _id, _handler, _skip, _offset) {
 	// generic GameMaker List chunk
 	/*  u32 count
 	 *  repeat (count)
@@ -72,6 +72,17 @@ function pIFF_listHandler(_b, _size, _id, _handler, _skip) {
 	if (_skip) {
 		// skip the remaining data which are the objects themselves
 		var _rem = buffer_tell(_b) - _start;
+		
+		// some have additional data before the list (e.g. TGIN)
+		// and since the chunk isn't just the list object, we need to append the size of the additional data in bytes
+		// so the calculation would succeed.
+		
+		// example: TGIN has a version number, int32, 4 bytes, so we pass 4 as the _offset
+		// and add 4 bytes to the remaining size. this way we don't screw up stuff.
+		if (!is_undefined(_offset)) {
+			_rem += _offset;
+		}
+		
 		buffer_seek(_b, buffer_seek_relative, _size - _rem);
 	}
 	
@@ -418,6 +429,127 @@ function pIFF_readItemSPRT(_b, _size, _id) {
 	};
 }
 
+function pIFF_bswap32(num) {
+	var __swapped = ((num >> 24) & 0xff      )| // move byte 3 to byte 0
+					((num <<  8) & 0xff0000  )| // move byte 1 to byte 2
+					((num >>  8) & 0xff00    )| // move byte 2 to byte 1
+					((num << 24) & 0xff000000); // move byte 0 to byte 3
+	return __swapped;
+}
+
+function pIFF_readItemTXTRBlob(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _length = 0;
+	
+	/*  Enjoy this weird PNG decoder implementation :/
+	 *  It's only purpose is to read all the chunks
+	 *  and find a valid IEND chunk
+	 *  where the data ends, feel free to make a struct of chunk positions idk.
+	 */
+	
+	// %PNG\xD\xA\x1A\xA
+	var _PPNG = 0x0A1A0A0D474E5089;
+	
+	// IEND chunk info
+	var _IEND = 0x444E4549;
+	var _ECRC = 0x826042AE; // CRC of the End chunk
+	
+	// check the PNG header magic.
+	if (buffer_read(_b, buffer_u64) != _PPNG) {
+		throw ("Caught invalid PNG header at address 0x" + string(ptr(_address)));	
+	}
+	
+	// main decoder loop
+	while (true) {
+		// we actually care about the length, so endianness matters.
+		var __len = pIFF_bswap32(buffer_read(_b, buffer_u32));
+		// here endianness doesn't matter
+		var __type = buffer_read(_b, buffer_u32);
+		// just skip the data :/
+		if (__len > 0) {
+			buffer_seek(_b, buffer_seek_relative, __len);
+		}
+		// same.
+		var __crc = buffer_read(_b, buffer_u32);
+		
+		// detect that the PNG chunk is absolutely an IEND chunk.
+		if (__type == _IEND && __crc == _ECRC && __len == 0) {
+			_length = buffer_tell(_b) - _address;
+			break;
+		}
+	}
+	
+	// return where PNG starts and ends.
+	return {
+		address: _address,
+		length: _length
+	};
+}
+
+function pIFF_readItemTXTR(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _scaled = buffer_read(_b, buffer_s32); // texgroup scale factor?
+	var _mipmap = buffer_read(_b, buffer_s32); // uh... who the heck is using them? (aka Texture MipMap Level/Count)
+	
+	// points to the 128b aligned PNG file ( NO LENGTH INFO )
+	var _texobjaddress = buffer_read(_b, buffer_u32);
+	var _oldA = buffer_tell(_b);
+	
+	buffer_seek(_b, buffer_seek_start, _texobjaddress);
+	var _texture = pIFF_readItemTXTRBlob(_b, _size, _id); // a reference PNG decoder, if you will
+	buffer_seek(_b, buffer_seek_start, _oldA);
+	
+	return {
+		address: _address,
+		scaled: _scaled,
+		mipmap: _mipmap,
+		texture: _texture
+	};
+}
+
+function pIFF_readItemTGINSimpleList(_b, _size, _id) {
+	// pointer to where the list is stored.
+	var _address = buffer_read(_b, buffer_u32);
+	var _oldA = buffer_tell(_b);
+	
+	buffer_seek(_b, buffer_seek_start, _address);
+	
+	var _count = buffer_read(_b, buffer_s32);
+	var _items = array_create(_count);
+	
+	// This one does not use pointers to elements
+	// This is just a simple list of asset INDEXES (AGAIN, NOT ADDRESSES!!!)
+	// Only used in TGIN so far?
+	for (var _i = 0; _i < _count; _i++) {
+		_items[_i] = buffer_read(_b, buffer_s32);	
+	}
+	
+	buffer_seek(_b, buffer_seek_start, _oldA);
+	
+	return _items;
+}
+
+function pIFF_readItemTGIN(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _name = pIFF_readString(_b);
+	
+	var _texturePages = pIFF_readItemTGINSimpleList(_b, _size, _id);
+	var _sprites = pIFF_readItemTGINSimpleList(_b, _size, _id);
+	var _spineSprites = pIFF_readItemTGINSimpleList(_b, _size, _id);
+	var _fonts = pIFF_readItemTGINSimpleList(_b, _size, _id);
+	var _tilesets = pIFF_readItemTGINSimpleList(_b, _size, _id);
+	
+	return {
+		address: _address,
+		name: _name,
+		texturePages: _texturePages,
+		sprites: _sprites,
+		spineSprites: _spineSprites,
+		fonts: _fonts,
+		tilesets: _tilesets
+	};
+}
+
 function pIFF_TPAGHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
@@ -443,6 +575,21 @@ function pIFF_SPRTHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemSPRT, true) };
+	return _result;
+}
+
+function pIFF_TXTRHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTXTR, true) };
+	return _result;
+}
+
+function pIFF_TGINHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _version = buffer_read(_b, buffer_s32); // :<
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, version: _version, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTGIN, true, 4) };
 	return _result;
 }
 
@@ -507,7 +654,6 @@ function pIFF_parse(_b) {
 		var _size = buffer_read(_b, buffer_u32);
 		switch (_hdr) {
 			default: {
-				// I am too lazy, Juju told me he only needs tpage entries, you do the rest of the work.
 				// Keep in mind that chunks change formats between GM versions sometimes, so you gotta parse GEN8 first.
 				_result[$ pIFF_idToString(_hdr)] = pIFF_dummyHandler(_b, _size, _hdr);
 				break;
@@ -529,7 +675,18 @@ function pIFF_parse(_b) {
 			}
 			
 			case PIFF_HEADER.SPRT: {
-				_result.SPRT = pIFF_SPRTHandler(_b, _size, _hdr);	
+				_result.SPRT = pIFF_SPRTHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.TXTR: {
+				_result.TXTR = pIFF_TXTRHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.TGIN: {
+				_result.TGIN = pIFF_TGINHandler(_b, _size, _hdr);
+				break;
 			}
 		}
 	}
