@@ -6,6 +6,11 @@ function pIFF_readString(_b) {
 	var _addr = buffer_read(_b, buffer_u32);
 	var _old = buffer_tell(_b);
 	
+	// for example in SOND the pointer to a string may be null.
+	if (_addr == 0) {
+		return undefined;	
+	}
+	
 	buffer_seek(_b, buffer_seek_start, _addr - 4);
 	var _len = buffer_read(_b, buffer_u32);
 	var _result = buffer_read(_b, buffer_string);
@@ -200,7 +205,7 @@ function pIFF_readItemFONT(_b, _size, _id) {
 	var _ascenderOffset = buffer_read(_b, buffer_s32);
 	
 	// weird I know
-	var _glyphs = pIFF_listHandler(_b, _size, _id, pIFF_readItemFONTGlyph, false);
+	var _glyphs = pIFF_listHandler(_b, _size, _id, pIFF_readItemFONTGlyph, false, 0);
 	
 	return {
 		address: _address,
@@ -550,38 +555,98 @@ function pIFF_readItemTGIN(_b, _size, _id) {
 	};
 }
 
+function pIFF_readItemAUDO(_b, _size, _id) {
+	
+	// address of the item, not the data.
+	var _address = buffer_tell(_b);
+	
+	var _length = buffer_read(_b, buffer_s32);
+	
+	// and here the actual data starts.
+	var _start = buffer_tell(_b);
+	
+	// :/
+	buffer_seek(_b, buffer_seek_relative, _length);
+	
+	return {
+		address: _address,
+		length: _length,
+		start: _start
+	};
+}
+
+enum PIFF_SOND_FLAGS {
+	AUDIOSYS = 100, // "Use New Audio System"? set by default on GMS 2.
+	EMBEDDED = 1, // is the audio data embedded in the AUDO chunk?
+	OGG = 2, // is that data an OGG?
+	DECOMPRESS = 3 // should the sound be decompressed on load? (also implies that the sound is an OGG???)
+};
+
+// Streamed OGG: 100 (AUDIOSYS)
+// Embedded WAV: 101 (AUDIOSYS | EMBEDDED)
+// InMemory OGG: 102 (AUDIOSYS | OGG)
+// DecompressOnLoad OGG: 103 (AUDIOSYS | DECOMPRESS)
+
+function pIFF_readItemSOND(_b, _size, _id) {
+	var _address = buffer_tell(_b);
+	var _name = pIFF_readString(_b);
+	var _flags = buffer_read(_b, buffer_u32);
+	var _type = pIFF_readString(_b);
+	var _file = pIFF_readString(_b);
+	var _effects = buffer_read(_b, buffer_u32);
+	var _volume = buffer_read(_b, buffer_f32);
+	var _pitch = buffer_read(_b, buffer_f32);
+	var _audiogroupId = buffer_read(_b, buffer_s32);
+	
+	// this is the index of the sound in the AUDO chunk
+	var _embeddedId = buffer_read(_b, buffer_s32);
+	
+	return {
+		address: _address,
+		name: _name,
+		flags: _flags,
+		type: _type,
+		file: _file,
+		effects: _effects,
+		volume: _volume,
+		pitch: _pitch,
+		audiogroupId: _audiogroupId,
+		embeddedId: _embeddedId
+	};
+}
+
 function pIFF_TPAGHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTPAG, true) };
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTPAG, true, 0) };
 	return _result;
 }
 
 function pIFF_FONTHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemFONT, true) };
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemFONT, true, 0) };
 	return _result;
 }
 
 function pIFF_AGRPHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemAGRP, true) };
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemAGRP, true, 0) };
 	return _result;
 }
 
 function pIFF_SPRTHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemSPRT, true) };
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemSPRT, true, 0) };
 	return _result;
 }
 
 function pIFF_TXTRHandler(_b, _size, _id) {
 	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
 	var _start = buffer_tell(_b);
-	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTXTR, true) };
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTXTR, true, 0) };
 	return _result;
 }
 
@@ -590,6 +655,20 @@ function pIFF_TGINHandler(_b, _size, _id) {
 	var _start = buffer_tell(_b);
 	var _version = buffer_read(_b, buffer_s32); // :<
 	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, version: _version, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemTGIN, true, 4) };
+	return _result;
+}
+
+function pIFF_AUDOHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemAUDO, true, 0) };
+	return _result;
+}
+
+function pIFF_SONDHandler(_b, _size, _id) {
+	pIFF_trace("Parsing chunk", pIFF_idToString(_id));
+	var _start = buffer_tell(_b);
+	var _result = { chunkSize: _size, chunkStart: _start, chunkId: _id, items: pIFF_listHandler(_b, _size, _id, pIFF_readItemSOND, true, 0) };
 	return _result;
 }
 
@@ -686,6 +765,16 @@ function pIFF_parse(_b) {
 			
 			case PIFF_HEADER.TGIN: {
 				_result.TGIN = pIFF_TGINHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.AUDO: {
+				_result.AUDO = pIFF_AUDOHandler(_b, _size, _hdr);
+				break;
+			}
+			
+			case PIFF_HEADER.SOND: {
+				_result.SOND = pIFF_SONDHandler(_b, _size, _hdr);
 				break;
 			}
 		}
