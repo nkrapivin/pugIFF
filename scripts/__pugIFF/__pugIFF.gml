@@ -322,6 +322,43 @@ function pIFF_readItemSPRTSpine(_b, _size, _id) {
 	};
 }
 
+function pIFF_readItemSPRTNineSlice(_b, _size, _id) {
+	var _address = buffer_read(_b, buffer_u32);
+	var _oldA = buffer_tell(_b);
+	
+	// ... no 9slice mode enabled for sprite?
+	if (_address == 0) {
+		return undefined;	
+	}
+	
+	buffer_seek(_b, buffer_seek_start, _address);
+	
+	var _left = buffer_read(_b, buffer_s32);
+	var _top = buffer_read(_b, buffer_s32);
+	var _right = buffer_read(_b, buffer_s32);
+	var _bottom = buffer_read(_b, buffer_s32);
+	var _enabled = bool(buffer_read(_b, buffer_s32));
+	var _tilemode = array_create(5);
+	for (var _i = 0; _i < 5; _i++) {
+		_tilemode[_i] = buffer_read(_b, buffer_s32);
+	}
+	
+	buffer_seek(_b, buffer_seek_start, _oldA);
+
+	// this structure definition is compatible with what sprite_nineslice_create returns
+	// even the fields names are the same!
+	return {
+		// uncomment if you want it, this will make the struct incompatible though.
+		//address: _address,
+		left: _left,
+		top: _top,
+		right: _right,
+		bottom: _bottom,
+		enabled: _enabled,
+		tilemode: _tilemode
+	};
+}
+
 enum PIFF_SPECIAL_SPRITE_TYPE {
 	BITMAP = 0, // basically a duplicate of the GM:S 1.4 data
 	SWF = 1, // not supported
@@ -377,7 +414,7 @@ function pIFF_readItemSPRT(_b, _size, _id) {
 			_sequenceAddress = buffer_read(_b, buffer_u32);
 			if (_specialVersion >= 3) { // GMS 2.3.2+
 				// read 9slice data:
-				_nineSliceAddress = buffer_read(_b, buffer_u32);
+				_nineSliceAddress = pIFF_readItemSPRTNineSlice(_b, _size, _id);
 			}
 		}
 		

@@ -5,6 +5,7 @@
     {"id":{"name":"fTest","path":"fonts/fTest/fTest.yy",},"order":0,},
     {"id":{"name":"pugIFF_Path","path":"scripts/pugIFF_Path/pugIFF_Path.yy",},"order":3,},
     {"id":{"name":"sndTest","path":"sounds/sndTest/sndTest.yy",},"order":0,},
+    {"id":{"name":"sprNinesliceTest","path":"sprites/sprNinesliceTest/sprNinesliceTest.yy",},"order":1,},
     {"id":{"name":"__pugIFF","path":"scripts/__pugIFF/__pugIFF.yy",},"order":0,},
     {"id":{"name":"sprDummyTest","path":"sprites/sprDummyTest/sprDummyTest.yy",},"order":0,},
     {"id":{"name":"Utils","path":"scripts/Utils/Utils.yy",},"order":1,},
@@ -50,7 +51,7 @@
   ],
   "IncludedFiles": [],
   "MetaData": {
-    "IDEVersion": "2.3.1.542",
+    "IDEVersion": "2.3.2.556",
   },
   "resourceVersion": "1.4",
   "name": "pugIFF",
